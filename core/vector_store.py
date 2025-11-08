@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
 import numpy as np
 from loguru import logger
 from core.utils import get_openai_client
@@ -99,52 +101,128 @@ class VectorStore:
         self.faiss_index = index
 
     # ---------------------------
-    # Query similar memories
+    # Query with recency weighting
     # ---------------------------
     def query(self, text: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
         k = top_k or self.top_k
         q = self._embed(text)
 
+        # --- ChromaDB backend ---
         if self.use_chroma:
             res = self.coll.query(
                 query_embeddings=[q],
                 n_results=k,
                 include=["documents", "metadatas", "distances"],
             )
-            out = []
+
+            base_results = []
             for i in range(len(res.get("ids", [[]])[0])):
-                out.append({
+                base_results.append({
                     "text": res["documents"][0][i],
                     "metadata": res["metadatas"][0][i],
                     "score": 1 - res["distances"][0][i],
                 })
-            return out
 
+            # ---- Recency weighting ----
+            all_docs = self.coll.get(include=["metadatas", "documents"])
+            now = datetime.now(timezone.utc)
+            recent_bonus = []
+
+            for i, meta in enumerate(all_docs["metadatas"]):
+                try:
+                    meta_obj = json.loads(meta.get("meta", "{}"))
+                    ts = meta_obj.get("timestamp")
+                    if not ts:
+                        continue
+                    ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    delta_minutes = (now - ts_dt).total_seconds() / 60.0
+                    # Boost recent memories within 30 minutes
+                    if delta_minutes < 30:
+                        bonus = max(0, 1 - delta_minutes / 30)
+                        recent_bonus.append({
+                            "text": all_docs["documents"][i],
+                            "metadata": all_docs["metadatas"][i],
+                            "score": 0.3 * bonus,
+                        })
+                except Exception:
+                    continue
+
+            combined = base_results + recent_bonus
+            combined.sort(key=lambda x: x["score"], reverse=True)
+
+            # Deduplicate results
+            seen = set()
+            deduped = []
+            for item in combined:
+                key = item["text"]
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(item)
+                if len(deduped) >= k:
+                    break
+
+            return deduped
+
+        # --- FAISS backend ---
         elif FAISS_OK and getattr(self, "faiss_index", None) is not None and len(self.records) > 0:
             vec = np.array([q], dtype="float32")
             faiss.normalize_L2(vec)
             D, I = self.faiss_index.search(vec, k)
+            now = datetime.now(timezone.utc)
+
             out = []
             for dist, idx in zip(D[0], I[0]):
                 if idx == -1:
                     continue
                 rec = self.records[idx]
+                ts = None
+                try:
+                    meta_obj = json.loads(rec.metadata.get("meta", "{}"))
+                    ts_str = meta_obj.get("timestamp")
+                    if ts_str:
+                        ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        delta_minutes = (now - ts_dt).total_seconds() / 60.0
+                        recency_bonus = max(0, 0.3 * (1 - delta_minutes / 30)) if delta_minutes < 30 else 0
+                    else:
+                        recency_bonus = 0
+                except Exception:
+                    recency_bonus = 0
+
                 out.append({
                     "text": rec.text,
                     "metadata": rec.metadata,
-                    "score": float(dist),
+                    "score": float(dist) + recency_bonus,
                 })
-            return out
 
+            out.sort(key=lambda x: x["score"], reverse=True)
+            return out[:k]
+
+        # --- In-memory fallback ---
         else:
             def cos(a, b):
                 a, b = np.array(a), np.array(b)
                 return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
 
-            scored = [
-                {"text": r.text, "metadata": r.metadata, "score": cos(q, r.embedding)}
-                for r in self.records
-            ]
+            now = datetime.now(timezone.utc)
+            scored = []
+            for r in self.records:
+                meta_obj = json.loads(r.metadata.get("meta", "{}"))
+                ts = meta_obj.get("timestamp")
+                recency_bonus = 0
+                if ts:
+                    try:
+                        ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        delta_minutes = (now - ts_dt).total_seconds() / 60.0
+                        if delta_minutes < 30:
+                            recency_bonus = 0.3 * (1 - delta_minutes / 30)
+                    except Exception:
+                        pass
+                scored.append({
+                    "text": r.text,
+                    "metadata": r.metadata,
+                    "score": cos(q, r.embedding) + recency_bonus,
+                })
+
             scored.sort(key=lambda x: x["score"], reverse=True)
             return scored[:k]
 

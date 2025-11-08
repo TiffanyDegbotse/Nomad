@@ -1,3 +1,4 @@
+# orchestrator/handlers.py
 from __future__ import annotations
 import json
 from loguru import logger
@@ -8,7 +9,7 @@ from core.utils import gen_id
 
 
 class PipelineHandlers:
-    """Coordinates the Vision → Context → Memory → Speech pipeline."""
+    """Coordinates the Vision → Context → Memory pipeline (no TTS narration)."""
 
     def __init__(self, settings: dict):
         self.settings = settings
@@ -40,15 +41,8 @@ class PipelineHandlers:
         except Exception as e:
             logger.warning(f"VectorStore add failed: {e}")
 
-        # --- Step 3: Generate speech ---
-        try:
-            text = (
-                f"Here's what I saw: {context['summary']}. "
-                f"I've stored it in memory for later reference."
-            )
-            out_path = self.tts.synth(text, play_audio=True)
-            logger.info(f"Speech generated at {out_path}")
-        except Exception as e:
-            logger.warning(f"TTS failed: {e}")
+        # --- Step 3: Skip generating vision narration speech ---
+        # We no longer generate "Here's what I saw..." TTS here.
+        # Audio replies will now only come from NomadQA.ask() during conversations.
 
         return context
