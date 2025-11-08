@@ -1,0 +1,60 @@
+[
+  {
+    "image_id": 0,
+    "image_name": "hwy_cali.png",
+    "timestamp": "2025-11-08T16:44:48.701659",
+    "has_signs": true,
+    "num_detections": 1,
+    "detections": [
+      {
+        "text": "Cabrillo Hwy\nSan Simeon California 93452",
+        "confidence": 0.95,
+        "sign_type": "highway",
+        "method": "openai_vision"
+      }
+    ]
+  },
+  {
+    "image_id": 1,
+    "image_name": "IMG_0138.JPG",
+    "timestamp": "2025-11-07T15:33:28",
+    "has_signs": false,
+    "num_detections": 0,
+    "detections": []
+  },
+  {
+    "image_id": 2,
+    "image_name": "IMG_8540.JPG",
+    "timestamp": "2025-10-12T17:01:10",
+    "has_signs": false,
+    "num_detections": 0,
+    "detections": []
+  },
+  {
+    "image_id": 3,
+    "image_name": "test1.jpg",
+    "timestamp": "2014-04-05T11:45:50",
+    "has_signs": true,
+    "num_detections": 3,
+    "detections": [
+      {
+        "text": "MORRISVILLE TOWN LIMIT",
+        "confidence": 0.95,
+        "sign_type": "town",
+        "method": "openai_vision"
+      },
+      {
+        "text": "ADOPT A HIGHWAY",
+        "confidence": 0.95,
+        "sign_type": "highway",
+        "method": "openai_vision"
+      },
+      {
+        "text": "JOSH CHEN DDS MORRISVILLE DENTAL",
+        "confidence": 0.95,
+        "sign_type": "highway",
+        "method": "openai_vision"
+      }
+    ]
+  }
+]
