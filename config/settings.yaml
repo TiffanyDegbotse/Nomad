@@ -1,0 +1,25 @@
+openai:
+  chat_model: gpt-4o
+  embedding_model: text-embedding-3-large
+  tts_model: tts-1
+  tts_voice: alloy
+  temperature: 0.3
+
+rag:
+  top_k: 5
+  min_score: 0.15
+  use_chroma: true
+  collection_name: sightsense_context
+
+logging:
+  level: INFO
+
+paths:
+  data_dir: data
+  images_dir: data/images
+  transcripts_dir: data/transcripts
+  metadata_dir: data/metadata
+  embeddings_dir: data/embeddings
+
+orchestrator:
+  loop_interval_seconds: 5

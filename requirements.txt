@@ -1,0 +1,14 @@
+openai>=1.40.0
+python-dotenv>=1.0.1
+PyYAML>=6.0.2
+loguru>=0.7.2
+pydub>=0.25.1
+pyttsx3>=2.90
+chromadb>=0.5.4
+faiss-cpu>=1.8.0.post1
+numpy>=1.26.4
+pillow>=10.4.0
+opencv-python>=4.10.0.84
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+requests>=2.32.3
