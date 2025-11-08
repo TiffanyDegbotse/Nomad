@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.log
+
+# --- Virtual environments ---
+venv/
+.env/
+.env.bak/
+
+# --- Configs & API Keys ---
+config/keys.env
+*.env
+
+# --- Data and temporary outputs ---
+data/images/
+data/transcripts/
+data/cache/
+data/tmp/
+*.mp3
+*.wav
+
+# --- Jupyter & notebooks ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+
+# --- IDE/project files ---
+.vscode/
+.idea/
+*.swp
