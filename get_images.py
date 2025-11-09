@@ -6,8 +6,8 @@ from datetime import datetime
 PI_USER = "mrinalgoel"
 PI_PASSWORD = "pi123"
 PI_HOST = "10.194.194.1"
-REMOTE_PHOTO_PATH = "/home/mrinalgoel/Desktop/test3.jpg"
-LOCAL_SAVE_DIR = "./test_photos/"
+REMOTE_PHOTO_PATH = "/home/mrinalgoel/Desktop/test.jpg"
+LOCAL_SAVE_DIR = "./test_images/"
 
 # Ensure local directory exists
 subprocess.run(f"mkdir -p {LOCAL_SAVE_DIR}", shell=True)
@@ -25,7 +25,7 @@ try:
         
         print(f"Downloaded: {local_filename}")
         
-        # Wait 1 minute
+        # Wait 5 sec for demo
         time.sleep(5)
         
 except KeyboardInterrupt:
