@@ -1,32 +1,25 @@
-import subprocess
+import requests
 import time
 from datetime import datetime
+import os
 
-# Configuration
-PI_USER = "mrinalgoel"
-PI_PASSWORD = "pi123"
 PI_HOST = "10.194.194.1"
-REMOTE_PHOTO_PATH = "/home/mrinalgoel/Desktop/test.jpg"
-LOCAL_SAVE_DIR = "./test_images/"
+PHOTO_FILENAME = "test.jpg"  # Name of photo on Pi's desktop
+LOCAL_SAVE_DIR = ".\\test_images\\"
 
-# Ensure local directory exists
-subprocess.run(f"mkdir -p {LOCAL_SAVE_DIR}", shell=True)
+os.makedirs(LOCAL_SAVE_DIR, exist_ok=True)
 
 try:
     while True:
-        # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         local_filename = f"{LOCAL_SAVE_DIR}photo_{timestamp}.jpg"
         
-        scp_cmd = f"sshpass -p '{PI_PASSWORD}' scp {PI_USER}@{PI_HOST}:{REMOTE_PHOTO_PATH} {local_filename}"
-        
-        # Download to local machine
-        subprocess.run(scp_cmd, shell=True)
+        response = requests.get(f"http://{PI_HOST}:8080/{PHOTO_FILENAME}")
+        with open(local_filename, 'wb') as f:
+            f.write(response.content)
         
         print(f"Downloaded: {local_filename}")
-        
-        # Wait 5 sec for demo
-        time.sleep(5)
+        time.sleep(60)
         
 except KeyboardInterrupt:
     print("\nStopping...")
