@@ -1,59 +1,32 @@
 #!/usr/bin/env python3
-"""
-NOMAD Voice Edition (Fast Start)
-Continuous Vision Context + Wake Word Interaction
-Optimized for speed and responsiveness
-"""
+"""NOMAD voice companion — continuous vision, RAG memory, and wake-word interaction."""
 
-import os
-import time
-import json
 import base64
+import json
 import threading
-import requests
-import re
+import time
 from datetime import datetime
-from pathlib import Path
-from dotenv import load_dotenv
-import speech_recognition as sr
-from sentence_transformers import SentenceTransformer
-from openai import OpenAI
+
 import chromadb
-from loguru import logger
+import requests
+import speech_recognition as sr
+from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 
-# ================================================================
-# SETUP
-# ================================================================
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-PI_HOST = "http://10.194.194.1:8080"
-IMAGES_DIR = Path("./test_images")
-AUDIO_DIR = Path("./data/audio")
-CAP_DIR = Path("./cap_images")
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-CAP_DIR.mkdir(parents=True, exist_ok=True)
+from nomad import config
 
-print("🚀 Starting NOMAD — initializing components...")
+config.ensure_dirs()
 
-# Load the embedding model once (this is what used to cause lag)
-print("🧠 Loading embedding model (MiniLM)...")
-EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-
-print("💾 Connecting to vector database...")
-chroma_client = chromadb.PersistentClient(path="./journey_db")
+client = OpenAI(api_key=config.OPENAI_API_KEY)
+chroma_client = chromadb.PersistentClient(path=str(config.DB_DIR))
 collection = chroma_client.get_or_create_collection(name="journey_locations")
 
-print("✅ Initialization complete! NOMAD is starting up.\n")
 
-# ================================================================
-# VISION CONTEXT BUILDER (BACKGROUND THREAD)
-# ================================================================
 class ContinuousImageProcessor(threading.Thread):
-    def __init__(self, collection):
+    def __init__(self, memory_collection):
         super().__init__(daemon=True)
-        self.collection = collection
-        self.embedding_model = EMBED_MODEL
+        self.collection = memory_collection
+        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.last_fetched = set()
 
     def run(self):
@@ -69,52 +42,43 @@ class ContinuousImageProcessor(threading.Thread):
                             self.add_to_memory(det["text"], image_path, det)
             except Exception as e:
                 print(f"⚠️ Background loop error: {e}")
-            time.sleep(10)  # less frequent, frees CPU
+            time.sleep(config.VISION_POLL_INTERVAL)
 
     def fetch_image(self):
-        """Pull current image from Pi"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = IMAGES_DIR / f"photo_{timestamp}.jpg"
+        filename = config.IMAGES_STREAM_DIR / f"photo_{timestamp}.jpg"
         try:
-            resp = requests.get(f"{PI_HOST}/photo.jpg", timeout=5)
+            resp = requests.get(f"{config.PI_HOST}/photo.jpg", timeout=5)
             if resp.status_code == 200:
-                with open(filename, "wb") as f:
-                    f.write(resp.content)
+                filename.write_bytes(resp.content)
                 print(f"🖼  New image: {filename.name}")
                 return filename
-            else:
-                print(f"⚠️ Pi returned {resp.status_code}")
+            print(f"⚠️ Pi returned {resp.status_code}")
         except Exception as e:
             print(f"⚠️ Could not fetch image: {e}")
         return None
-    
+
     def capture_image(self):
-        """Pull current image from Pi"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = CAP_DIR / f"photo_{timestamp}.jpg"
+        filename = config.IMAGES_CAPTURE_DIR / f"photo_{timestamp}.jpg"
         try:
-            resp = requests.get(f"{PI_HOST}/cap.jpg", timeout=5)
+            resp = requests.get(f"{config.PI_HOST}/cap.jpg", timeout=5)
             if resp.status_code == 200:
-                with open(filename, "wb") as f:
-                    f.write(resp.content)
+                filename.write_bytes(resp.content)
                 print(f"🖼  New image: {filename.name}")
                 return filename
-            else:
-                print(f"Pi returned {resp.status_code}")
+            print(f"Pi returned {resp.status_code}")
         except Exception as e:
             print(f"Could not fetch image: {e}")
         return None
 
-
-
     def analyze_image(self, image_path):
-        """Use GPT-4o Vision to detect signs"""
-        with open(image_path, "rb") as f:
-            b64_img = base64.b64encode(f.read()).decode("utf-8")
-
-        prompt = """Analyze this image and detect any visible location, sign, or landmark.
-Respond ONLY in JSON:
-{"signs":[{"text":"exact text or landmark","confidence":0.9}]}"""
+        b64_img = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+        prompt = (
+            "Analyze this image and detect any visible location, sign, or landmark.\n"
+            'Respond ONLY in JSON:\n'
+            '{"signs":[{"text":"exact text or landmark","confidence":0.9}]}'
+        )
 
         try:
             resp = client.chat.completions.create(
@@ -123,13 +87,18 @@ Respond ONLY in JSON:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}", "detail": "high"}}
-                    ]
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{b64_img}",
+                                "detail": "high",
+                            },
+                        },
+                    ],
                 }],
                 max_tokens=300,
                 temperature=0.2,
             )
-
             text = resp.choices[0].message.content.strip()
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
@@ -146,35 +115,32 @@ Respond ONLY in JSON:
         meta = {
             "timestamp": datetime.now().isoformat(),
             "image_name": image_path.name,
-            "confidence": detection.get("confidence", 0.8)
+            "confidence": detection.get("confidence", 0.8),
         }
         self.collection.add(
             embeddings=[emb],
             documents=[text],
             metadatas=[meta],
-            ids=[f"mem_{int(time.time())}"]
+            ids=[f"mem_{int(time.time())}"],
         )
         print(f"🧠 Added memory: '{text}' ({meta['confidence']:.2f})")
 
 
-# ================================================================
-# VOICE INTERFACE (FOREGROUND LOOP)
-# ================================================================
 def calibrate_mic():
-    r = sr.Recognizer()
+    recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("🎚️  Calibrating microphone for background noise...")
-        r.adjust_for_ambient_noise(source, duration=1)
+        recognizer.adjust_for_ambient_noise(source, duration=1)
     print("🎤 Microphone ready.")
-    return r
+    return recognizer
 
 
-def wait_for_wake_word(r):
+def wait_for_wake_word(recognizer):
     with sr.Microphone() as source:
         print("\n🎧 Waiting for 'Nomad'...")
-        audio = r.listen(source, timeout=None, phrase_time_limit=4)
+        audio = recognizer.listen(source, timeout=None, phrase_time_limit=4)
     try:
-        text = r.recognize_google(audio).lower()
+        text = recognizer.recognize_google(audio).lower()
         if "nomad" in text:
             print("👂 Wake word detected!")
             return True
@@ -182,12 +148,13 @@ def wait_for_wake_word(r):
         pass
     return False
 
-def wait_for_wake_word_picture(r):
+
+def wait_for_wake_word_picture(recognizer):
     with sr.Microphone() as source:
         print("\n🎧 Waiting for 'take a picture'...")
-        audio = r.listen(source, timeout=None, phrase_time_limit=4)
+        audio = recognizer.listen(source, timeout=None, phrase_time_limit=4)
     try:
-        text = r.recognize_google(audio).lower()
+        text = recognizer.recognize_google(audio).lower()
         print(f"🗣️ You said: {text}")
         if "take a picture" in text:
             print("👂 Wake word detected!")
@@ -197,13 +164,12 @@ def wait_for_wake_word_picture(r):
     return False
 
 
-
-def capture_question(r):
+def capture_question(recognizer):
     with sr.Microphone() as source:
         print("🎙️ Ask your question...")
-        audio = r.listen(source, timeout=8, phrase_time_limit=10)
+        audio = recognizer.listen(source, timeout=8, phrase_time_limit=10)
     try:
-        question = r.recognize_google(audio)
+        question = recognizer.recognize_google(audio)
         print(f"🗣️ You said: {question}")
         return question
     except Exception:
@@ -211,15 +177,12 @@ def capture_question(r):
         return None
 
 
-# ================================================================
-# MEMORY QUERY + RESPONSE
-# ================================================================
-def query_memories(collection, question, top_k=5):
-    q_emb = EMBED_MODEL.encode(question).tolist()
+def query_memories(embed_model, question, top_k=5):
+    q_emb = embed_model.encode(question).tolist()
     res = collection.query(
         query_embeddings=[q_emb],
         n_results=top_k,
-        include=["documents", "metadatas", "distances"]
+        include=["documents", "metadatas", "distances"],
     )
     memories = []
     for i, doc in enumerate(res["documents"][0]):
@@ -236,8 +199,9 @@ def generate_reply(question, memories):
         context = "(no memories yet)"
     else:
         context = "\n".join(
-            [f"- {m['text']} (conf: {m['metadata'].get('confidence', 0):.2f}, time: {m['metadata'].get('timestamp', 'unknown')})"
-             for m in memories]
+            f"- {m['text']} (conf: {m['metadata'].get('confidence', 0):.2f}, "
+            f"time: {m['metadata'].get('timestamp', 'unknown')})"
+            for m in memories
         )
     prompt = f"""
 You are Nomad, an AI travel companion.
@@ -254,7 +218,7 @@ Respond as a friendly travel guide in 2–3 sentences.
         messages=[
             {"role": "system", "content": "You are Nomad, an AI travel companion."},
             {"role": "user", "content": prompt},
-        ]
+        ],
     )
     reply = resp.choices[0].message.content.strip()
     print(f"💬 Nomad: {reply}")
@@ -262,21 +226,22 @@ Respond as a friendly travel guide in 2–3 sentences.
 
 
 def synthesize_and_send(reply):
-    """Generate TTS and send to Pi HTTP server"""
     try:
         speech = client.audio.speech.create(
             model="gpt-4o-mini-tts",
             voice="alloy",
-            input=reply
+            input=reply,
         )
-        audio_path = AUDIO_DIR / "nomad_reply.mp3"
-        with open(audio_path, "wb") as f:
-            f.write(speech.read())
+        audio_path = config.AUDIO_DIR / "nomad_reply.mp3"
+        audio_path.write_bytes(speech.read())
         print(f"💾 Audio saved: {audio_path}")
 
-        # Send to Pi for playback
-        with open(audio_path, "rb") as f:
-            res = requests.post(f"{PI_HOST}/audio", files={"file": f}, timeout=10)
+        with open(audio_path, "rb") as audio_file:
+            res = requests.post(
+                f"{config.PI_HOST}/audio",
+                files={"file": audio_file},
+                timeout=10,
+            )
             if res.status_code == 200:
                 print("📡 Sent to Pi for playback")
             else:
@@ -285,34 +250,32 @@ def synthesize_and_send(reply):
         print(f"⚠️ Could not send audio: {e}")
 
 
-# ================================================================
-# MAIN LOOP
-# ================================================================
 def main():
     print("=" * 70)
     print("🚗 NOMAD — Fast Start Edition")
     print("=" * 70)
 
-    # Start background vision thread
+    print("🚀 Starting NOMAD — initializing components...")
+    print("🧠 Loading embedding model (MiniLM)...")
+    embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+    print("💾 Connecting to vector database...")
+    print("✅ Initialization complete! NOMAD is starting up.\n")
+
     bg = ContinuousImageProcessor(collection)
     bg.start()
 
-    # Prepare microphone
     recognizer = calibrate_mic()
 
-    # Main voice loop
     while True:
         if wait_for_wake_word(recognizer):
-            q = capture_question(recognizer)
-            if q:
-                memories = query_memories(collection, q)
-                reply = generate_reply(q, memories)
+            question = capture_question(recognizer)
+            if question:
+                memories = query_memories(embed_model, question)
+                reply = generate_reply(question, memories)
                 synthesize_and_send(reply)
         time.sleep(0.5)
         if wait_for_wake_word_picture(recognizer):
             bg.capture_image()
-
-
 
 
 if __name__ == "__main__":
